@@ -1,0 +1,21 @@
+# ignore all directories named .*
+.*/ 
+
+# ignore pycache
+__pycache__/
+
+# ignore .env
+.env
+
+.python-version
+
+.DS_Store
+
+# ignore database files
+.document_db.db
+.final_db.db
+*.db.lock
+
+# ignore datafile contents but keep the folder
+datafile/*
+!datafile/.gitkeep
