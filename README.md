@@ -1,4 +1,4 @@
-# RAG Pipeline for Company Documents using MilvusDB and LangChain
+# RAG Pipeline for Enterpise Documents using MilvusDB and LangChain
 
 A specialized Retrieval Augmented Generation (RAG) pipeline designed for corporate documents such as Collective Bargaining Agreements (CCNL), company regulations, and business policies. The system features complete document injection with metadata extraction, intelligent chunking with paragraph titles, and advanced retrieval with document and title routing to provide accurate answers through a Groq-hosted LLM.
 
