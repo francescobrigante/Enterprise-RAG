@@ -14,13 +14,36 @@ import json
 
 # config constants
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-DB_PATH = "./document_db.db"
-COLLECTION = "pdf_embeddings"
+DB_PATH = "./final_db.db"  # changed to use the database with titles
+COLLECTION = "pdf_embeddings_with_titles"  # collection with chunk_title metadata
 
 # LLM for NER
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-LLM_NAME = "qwen/qwen3-32b"
+# LLM_NAME = "qwen/qwen3-32b"
+LLM_NAME = "openai/gpt-oss-120b"
+
+
+pdf_files = [
+    {
+        "path": "datafile/ccnl_commercio_terziario_distribuzione_e_servizi.pdf",
+        "START_PAGES_TO_SKIP": 8,
+        "END_PAGES_TO_SKIP": 2,
+        "num_pages": 66
+    },
+    {
+        "path": "datafile/BIS - Regolamento Aziendale.pdf",
+        "START_PAGES_TO_SKIP": 0,
+        "END_PAGES_TO_SKIP": 0,
+        "num_pages": 4
+    },
+    {
+        "path": "datafile/codice etico fittizio_Salute e sicurezza dei lavoratori.pdf",
+        "START_PAGES_TO_SKIP": 0,
+        "END_PAGES_TO_SKIP": 0,
+        "num_pages": 1
+    }
+]
 
 
 # normalize file names
@@ -175,6 +198,82 @@ class FileRouter:
             print(result_text)
             print(f"LLM extraction failed: {e}")
             return None
+        
+        
+
+class TitleExtractor:
+    
+    def __init__(self):
+        if GROQ_API_KEY:
+            self.llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=LLM_NAME, temperature = 0.0)
+            
+            self.title_prompt = PromptTemplate(
+                input_variables=["query", "available_titles"],
+                template=textwrap.dedent("""
+                    ### System:
+                    Analizza la query e identifica se fa riferimento a titoli specifici presenti nella lista.
+                    Eventualmente aggiungi quei titoli presenti nella lista in "relevant_titles".
+                    Restituisci SOLO un JSON con questa struttura:
+                    {{
+                        "relevant_titles": ["titolo1", "titolo2"],
+                        "has_title_match": true/false,
+                        "confidence": "high"/"medium"/"low"
+                    }}
+                    
+                    Criteri:
+                    - "high": la query menziona esplicitamente il titolo o numero articolo
+                    - "medium": la query fa riferimento al contenuto del titolo  
+                    - "low": solo vagamente correlato
+                    - Se non trovi match rilevanti: {{"relevant_titles": [], "has_title_match": false, "confidence": "low"}}
+
+                    ### Query:
+                    "{query}"
+
+                    ### Available titles:
+                    {available_titles}
+
+                    ### Examples:
+                    - "Cosa dice l'articolo 23 del CCNL?" → cerca "Articolo 23" o simili nei titoli per la predizione
+                    - "Cosa dice il Regolamento Aziendale su salute e sicurezza?" → cerca "salute e sicurezza" o simili nei titoli per la predizione
+                    - "Quali sono le procedure e diritti di informazione nel ccnl?" → cerca "procedure e diritti di informazione" o simili nei titoli per la predizione
+
+                    ### Response:
+                """).strip()
+            )
+        else:
+            self.llm = None
+            
+            
+    def get_titles_from_query(self, query: str, titles: List[str]) -> Dict[str, Any]:
+        if not self.llm or not titles:
+            return {"relevant_titles": [], "has_title_match": False, "confidence": "low"}
+        
+        try:
+            available_titles = "\n".join([f"- {title}" for title in titles])
+            
+            prompt = self.title_prompt.format(query=query, available_titles=available_titles)
+            
+            response = self.llm.invoke(prompt)
+            result_text = response.content.strip()
+            
+            # clean response if it contains thinking tags
+            if "</think>" in result_text:
+                result_text = result_text.split("</think>", 1)[1].strip()
+            
+            # parse JSON
+            try:
+                result = json.loads(result_text)
+                return result
+            except json.JSONDecodeError:
+                json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group())
+                return {"relevant_titles": [], "has_title_match": False, "confidence": "low"}
+                
+        except Exception as e:
+            print(f"Title matching failed: {e}")
+            return {"relevant_titles": [], "has_title_match": False, "confidence": "low"}
+
     
 
 
@@ -260,25 +359,144 @@ class DocumentRetriever:
         ]
 
     # semantic search with file routing and title matching
-    def complete_seach(self, query: str, k = 5, threshold = 0.6) -> List[Dict[str, Any]]:
+    def complete_search(self, query: str, k = 5, threshold = 0.6) -> List[Dict[str, Any]]:
     
         pdf_index = build_pdf_index("./datafile")
         router = FileRouter(pdf_index)
         mentioned_files = router.extract_mentioned_files(query)
         
-        # if no files mentioned, perform similarity search on title:
+        # if no files mentioned, do normal search
         if mentioned_files==None or len(mentioned_files)==0:
-            # perform title similarity search
-            # if we get results, then return them
-            # if not, perform regular search
-            print()
+            return self.search(query, k, threshold)
         
         # we have mentioned files
         else:
-            # in those files, perform title similarity search
-            # if we get results, return them
-            # if not, perform regular search in those files only
-            print()
+            # extract list of titles from Milvus DB for mentioned files
+            all_titles = []
+            
+            try:
+                # query Milvus to get all chunk_title metadata for mentioned files
+                filter_expr = f"filename in {mentioned_files}"
+                
+                # get all chunks for these files (high k value to get all)
+                docs_scores = self.vector_store.similarity_search_with_score(
+                    query="", k=10000, expr=filter_expr
+                )
+                
+                # extract unique titles from metadata, filtering out unwanted ones
+                seen_titles = set()
+                for doc, score in docs_scores:
+                    chunk_title = doc.metadata.get("chunk_title", "")
+                    if (chunk_title and 
+                        chunk_title not in ["UNKNOWN", "SKIP", "TO_ASSIGN", ""] and 
+                        chunk_title not in seen_titles):
+                            all_titles.append(chunk_title)
+                            seen_titles.add(chunk_title)
+                
+                print(f"Extracted {len(all_titles)} unique titles from mentioned files")
+
+                # if no titles extracted, perform regular routed search
+                if all_titles is None or len(all_titles) == 0:
+                    
+                    print(f"\n==================Routing query to files: {', '.join(mentioned_files)}\n")
+        
+                    docs_scores = self.vector_store.similarity_search_with_score(query, k=k, expr=filter_expr)
+
+                    return [
+                        {
+                            "text": doc.page_content,
+                            "filename": doc.metadata.get("filename", "unknown"),
+                            "page_number": doc.metadata.get("page_number", 0),
+                            "chunk_id": doc.metadata.get("chunk_id", 0),
+                            "score": float(score)
+                        }
+                        for doc, score in docs_scores #TODO: eventually add threshold?
+                    ]
+                    
+                
+                # we have titles in our db
+                # does the query refer to those titles?
+                title_extractor = TitleExtractor()
+                result = title_extractor.get_titles_from_query(query, all_titles)
+                
+                title_routing = result.get('has_title_match', False)
+                
+                # no titles found, perform regular routed search
+                if not title_routing:
+                    print(f"\n==================Routing query to files: {', '.join(mentioned_files)}\n")
+        
+                    docs_scores = self.vector_store.similarity_search_with_score(query, k=k, expr=filter_expr)
+
+                    return [
+                        {
+                            "text": doc.page_content,
+                            "filename": doc.metadata.get("filename", "unknown"),
+                            "page_number": doc.metadata.get("page_number", 0),
+                            "chunk_id": doc.metadata.get("chunk_id", 0),
+                            "score": float(score)
+                        }
+                        for doc, score in docs_scores #TODO: eventually add threshold?
+                    ]
+                
+                #else titles found
+                titles_found = result.get('relevant_titles', [])
+                confidence = result.get('confidence', 'N/A')
+                
+                if titles_found == None or len(titles_found)==0:
+                    print(f"\n==================Routing query to files: {', '.join(mentioned_files)}\n")
+        
+                    docs_scores = self.vector_store.similarity_search_with_score(query, k=k, expr=filter_expr)
+
+                    return [
+                        {
+                            "text": doc.page_content,
+                            "filename": doc.metadata.get("filename", "unknown"),
+                            "page_number": doc.metadata.get("page_number", 0),
+                            "chunk_id": doc.metadata.get("chunk_id", 0),
+                            "score": float(score)
+                        }
+                        for doc, score in docs_scores #TODO: eventually add threshold?
+                    ]
+                
+                print(f"Found {len(titles_found)} titles with confidence: {confidence}")
+                print(f"Relevant titles: {titles_found}")
+                
+                # filter by titles and document name
+                title_filter_parts = [f'chunk_title == "{title}"' for title in titles_found]
+                title_filter = " or ".join(title_filter_parts)
+                
+                combined_filter = f"filename in {mentioned_files} and ({title_filter})"
+                
+                print(f"\n==================Routing query to files: {', '.join(mentioned_files)}")
+                print(f"Filtering by titles: {', '.join(titles_found)}\n")
+                
+                docs_scores = self.vector_store.similarity_search_with_score(
+                    query, k=k, expr=combined_filter
+                )
+                
+                # if not found, apply only document filter
+                if not docs_scores:
+                    print("No results with specific titles, falling back to file-only search...")
+                    file_filter = f"filename in {mentioned_files}"
+                    docs_scores = self.vector_store.similarity_search_with_score(
+                        query, k=k, expr=file_filter
+                    )
+
+                return [
+                    {
+                        "text": doc.page_content,
+                        "filename": doc.metadata.get("filename", "unknown"),
+                        "page_number": doc.metadata.get("page_number", 0),
+                        "chunk_id": doc.metadata.get("chunk_id", 0),
+                        "chunk_title": doc.metadata.get("chunk_title", "unknown"),
+                        "score": float(score)
+                    }
+                    for doc, score in docs_scores
+                ]
+                
+            except Exception as e:
+                print(f"Error extracting titles from database: {e}")
+                return []
     
 
 
@@ -307,7 +525,8 @@ def main():
     
     retriever = DocumentRetriever()
     # results = retriever.search(QUERY, k=5)
-    results = retriever.routed_search(QUERY, k=5, threshold=0.0)
+    # results = retriever.routed_search(QUERY, k=5, threshold=0.0)
+    results = retriever.complete_search(QUERY, k=5, threshold=0.0)  # test the new method
 
     print_results(results, QUERY)
     

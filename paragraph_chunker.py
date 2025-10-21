@@ -10,8 +10,8 @@ from transformers import AutoTokenizer, AutoConfig
 from title_extractor import extract_titles
 from pdf_chunker import extract_pages, remove_header, text_to_chunks
 
-START_PAGES_TO_SKIP = 8
-END_PAGES_TO_SKIP = 2
+START_PAGES_TO_SKIP = 0
+END_PAGES_TO_SKIP = 0
 
 MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 
@@ -41,7 +41,7 @@ def get_pdf_titles(pdf_path, headers_to_remove, num_pages, keep_page_title=True,
     titles_per_page = []
     
     for page_number in range(1, num_pages + 1):
-        if page_number <= START_PAGES_TO_SKIP or page_number > num_pages - END_PAGES_TO_SKIP:
+        if page_number <= start_pages_to_skip or page_number > num_pages - end_pages_to_skip:
             titles_per_page.append(['SKIP'])
         else:
             titles = extract_titles(pdf_path, headers_to_remove, page_number, keep_page_title)
@@ -204,11 +204,18 @@ def get_chunks_from_pdf(pdf_path, titles):
         
     # now visit all_chunks and assign titles to those with "TO_ASSIGN"
     # we assign the last known title
-    last_known_title = "UNKNOWN"
+    
+    # use the first chunk's title as initial value, or "UNKNOWN" if not available
+    first_real_title = "UNKNOWN"
+    if all_chunks and all_chunks[0]['chunk_title'] not in ["TO_ASSIGN", "UNKNOWN", "SKIP"]:
+        first_real_title = all_chunks[0]['chunk_title']
+    
+    last_known_title = first_real_title
+    
     for chunk in all_chunks:
         if chunk['chunk_title'] == "TO_ASSIGN":
             chunk['chunk_title'] = last_known_title
-        elif chunk['chunk_title'] != "UNKNOWN":
+        elif chunk['chunk_title'] not in ["UNKNOWN", "SKIP"]:
             last_known_title = chunk['chunk_title']
     
     return all_chunks
@@ -216,8 +223,8 @@ def get_chunks_from_pdf(pdf_path, titles):
 
 
 if __name__ == "__main__":
-    pdf_path = "datafile/ccnl_commercio_terziario_distribuzione_e_servizi.pdf"
-    # pdf_path = "datafile/BIS - Regolamento Aziendale.pdf"
+    # pdf_path = "datafile/ccnl_commercio_terziario_distribuzione_e_servizi.pdf"
+    pdf_path = "datafile/BIS - Regolamento Aziendale.pdf"
     # pdf_path = "datafile/codice etico fittizio_Salute e sicurezza dei lavoratori.pdf"
     
     # START_PAGES_TO_SKIP = 0

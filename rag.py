@@ -26,9 +26,9 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY not found in environment variables.")
 
-# LLM_NAME = "openai/gpt-oss-120b"
+LLM_NAME = "openai/gpt-oss-120b"
 # LLM_NAME = "llama-3.3-70b-versatile"
-LLM_NAME = "qwen/qwen3-32b"
+# LLM_NAME = "qwen/qwen3-32b"
 
 
 # ======================== RAG Wrapper ===================
@@ -138,7 +138,8 @@ class RAGWrapper:
     # if text_only == False, then it returns also metadata
     def get_relevant_text(self, query: str, k: int = 5, text_only: bool = True):
 
-        results = self.retriever.search(query, k=k)
+        # CHANGE HERE WITH SPECIFIED SEARCH FUNCTION
+        results = self.retriever.complete_search(query, k=k)
         
         if text_only:
             return [result["text"] for result in results]

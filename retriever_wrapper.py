@@ -25,5 +25,6 @@ class RetrieverWrapper(BaseRetriever):
         return Document(page_content=result["text"], metadata=metadata)
     
     def _get_relevant_documents(self, query: str, *, run_manager) -> List[Document]:
-        results = self.retriever.routed_search(query, k=self.k, threshold=self.threshold)
+        # CHANGE HERE WITH SPECIFIED SEARCH FUNCTION
+        results = self.retriever.complete_search(query, k=self.k, threshold=self.threshold)
         return [self._dict_to_document(result) for result in results]

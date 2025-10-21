@@ -49,20 +49,19 @@ def test_queries(rag: RAGWrapper, queries: List[str], k: int = 5):
 
 
 QUERIES = [
+    "Quali sono i doveri del lavoratore?",                                           # codice etico
     "Cosa dice l'articolo 23 del cnnl?",
     "Chi era Albert Einstein?",
     "Potresti spiegarmi la differenza tra srl ed spa?",
     "Se dovessi assentarmi dal lavoro, posso comunicarlo a voce il giorno stesso?", # regolamento aziendale
     "Cosa comporta un passaggio di livello in azienda secondo il ccnl?",                            # ccnl commercio                               
-    "Quali sono i doveri del lavoratore?",                                           # codice etico
     "cosa dice il regolamento aziendale su igiene e sicurezza?",
     "Quante ore è previso che io lavori nella mia azienda?",
-    "Cosa dice l'articolo 23 del regolamento aziendale?",
     "Esistono spazi all'interno per fumare?",
-    "Si può fumare secondo il regolamento aziendale?",
     "Si può andare a lavoro in pantaloncini d'estate?",
+    "Si può fumare secondo il regolamento aziendale?",
+    "Cosa dice il CCNL sulle assenze?",
     "cosa devo fare in caso di assenza?"
-
 ]
 
 
@@ -79,7 +78,7 @@ def main():
 
     if print_retieved:
         texts = rag.get_relevant_text(question, k=5, text_only=True)
-        print("Retrieved (before document routing):")
+        print("Retrieved:")
         for i, t in enumerate(texts[:3], 1):
             t = t.replace("\n", " ")
             print(f"- {t[:200]}{'...' if len(t) > 200 else ''}")
